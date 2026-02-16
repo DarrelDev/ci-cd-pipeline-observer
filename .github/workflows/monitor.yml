@@ -94,10 +94,14 @@ jobs:
             
             [View Workflow Run](https://github.com/${{ env.TARGET_REPO }}/actions/runs/${{ steps.fetch.outputs.run_id }})
 
-      - name: Update State Rolling Cache
+      # PERBAIKAN: Langkah ini dipecah jadi dua agar valid
+      - name: Write State File
+        if: steps.fetch.outputs.status == 'new'
+        run: echo "${{ steps.fetch.outputs.commit_sha }}" > ${{ env.STATE_FILE }}
+
+      - name: Save State to Cache
         if: steps.fetch.outputs.status == 'new'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.STATE_FILE }}
           key: observer-state-${{ github.run_id }}
-        run: echo "${{ steps.fetch.outputs.commit_sha }}" > ${{ env.STATE_FILE }}
