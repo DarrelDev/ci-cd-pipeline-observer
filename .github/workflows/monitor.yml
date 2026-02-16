@@ -1,14 +1,121 @@
-name: Test Connection Only
+name: CI/CD Pipeline Observer
 
-on: workflow_dispatch
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  # Kita pakai Magisk karena dia rajin update & punya artifact
+  TARGET_REPO: topjohnwu/Magisk
+  STATE_FILE: last_processed_commit.txt
 
 jobs:
-  test-bot:
+  observability-engine:
     runs-on: ubuntu-latest
     steps:
-      - name: Kirim Pesan Halo
+      - name: State Restoration Cache
+        uses: actions/cache/restore@v4
+        id: restore-state
+        with:
+          path: ${{ env.STATE_FILE }}
+          key: observer-state-${{ github.run_id }}
+          restore-keys: |
+            observer-state-
+
+      - name: Fetch Latest Artifact Build
+        id: fetch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "DETEKTIF: Memeriksa target repository..."
+          echo "Target: ${{ env.TARGET_REPO }}"
+
+          # Ambil data run terakhir yang sukses
+          LATEST_RUN=$(gh api "repos/${{ env.TARGET_REPO }}/actions/runs" \
+            -F status=success \
+            -F event=push \
+            -F per_page=1 \
+            --jq '.workflow_runs[0]')
+
+          if [ -z "$LATEST_RUN" ] || [ "$LATEST_RUN" == "null" ]; then
+             echo "FATAL: Tidak bisa mengambil data dari ${{ env.TARGET_REPO }}"
+             exit 1
+          fi
+
+          COMMIT_SHA=$(echo "$LATEST_RUN" | jq -r .head_sha)
+          RUN_ID=$(echo "$LATEST_RUN" | jq -r .id)
+          ARTIFACTS_URL=$(echo "$LATEST_RUN" | jq -r .artifacts_url)
+          
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "artifacts_url=$ARTIFACTS_URL" >> $GITHUB_OUTPUT
+          
+          # Logika Cek Duplikat
+          if [ -f "${{ env.STATE_FILE }}" ]; then
+            PREV_COMMIT=$(cat ${{ env.STATE_FILE }})
+          else
+            PREV_COMMIT="none"
+          fi
+          
+          if [ "$COMMIT_SHA" == "$PREV_COMMIT" ]; then
+            echo "status=duplicate" >> $GITHUB_OUTPUT
+            echo ">>> Tidak ada update baru. Standby."
+          else
+            echo "status=new" >> $GITHUB_OUTPUT
+            echo ">>> Update baru ditemukan!"
+          fi
+
+      - name: Artifact Inspection
+        id: inspect
+        if: steps.fetch.outputs.status == 'new'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARTIFACTS=$(gh api "${{ steps.fetch.outputs.artifacts_url }}" --jq '.artifacts')
+          COUNT=$(echo "$ARTIFACTS" | jq length)
+          
+          if [ "$COUNT" -gt "0" ]; then
+            echo "has_artifacts=true" >> $GITHUB_OUTPUT
+            echo "count=$COUNT" >> $GITHUB_OUTPUT
+            LIST=$(echo "$ARTIFACTS" | jq -r '.[] | "- " + .name + " (" + (.size_in_bytes | tostring) + " bytes)"')
+            echo "artifact_list<<EOF" >> $GITHUB_OUTPUT
+            echo "$LIST" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "has_artifacts=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notification Dispatch Telegram
+        if: steps.fetch.outputs.status == 'new' && steps.inspect.outputs.has_artifacts == 'true'
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
-          message: "✅ Halo Darrel! Bot Telegram sudah terhubung sukses."
+          format: markdown
+          message: |
+            *🚀 Update Magisk Terdeteksi!*
+            
+            *Repository:* `${{ env.TARGET_REPO }}`
+            *Commit:* `${{ steps.fetch.outputs.commit_sha }}`
+            *Artifacts:* ${{ steps.inspect.outputs.count }} file
+            
+            *Daftar File:*
+            ${{ steps.inspect.outputs.artifact_list }}
+            
+            [Klik untuk Download](https://github.com/${{ env.TARGET_REPO }}/actions/runs/${{ steps.fetch.outputs.run_id }})
+
+      - name: Write State File
+        if: steps.fetch.outputs.status == 'new'
+        run: echo "${{ steps.fetch.outputs.commit_sha }}" > ${{ env.STATE_FILE }}
+
+      - name: Save State to Cache
+        if: steps.fetch.outputs.status == 'new'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.STATE_FILE }}
+          key: observer-state-${{ github.run_id }}
