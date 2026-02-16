@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  # Target Repo (Bisa diganti kapan saja)
+  # Target Repository
   TARGET_REPO: topjohnwu/Magisk
   STATE_FILE: last_release_tag.txt
 
@@ -33,10 +33,10 @@ jobs:
         run: |
           echo ">>> Checking latest release for: ${{ env.TARGET_REPO }}"
           
-          # Ambil data Release Terbaru via API
+          # Fetch Latest Release Data via API
           RELEASE_DATA=$(gh api "repos/${{ env.TARGET_REPO }}/releases/latest")
           
-          # Ekstrak Info Penting
+          # Extract Key Info
           TAG_NAME=$(echo "$RELEASE_DATA" | jq -r .tag_name)
           RELEASE_URL=$(echo "$RELEASE_DATA" | jq -r .html_url)
           TITLE=$(echo "$RELEASE_DATA" | jq -r .name)
@@ -45,10 +45,10 @@ jobs:
           echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
           echo "title=$TITLE" >> $GITHUB_OUTPUT
 
-          # Simpan daftar aset file ke file sementara
+          # Save assets to temp file for processing
           echo "$RELEASE_DATA" | jq .assets > assets.json
           
-          # Cek Cache (Apakah versi ini sudah pernah dilaporkan?)
+          # Check Cache (Deduplication Logic)
           if [ -f "${{ env.STATE_FILE }}" ]; then
             PREV_TAG=$(cat ${{ env.STATE_FILE }})
           else
@@ -60,13 +60,13 @@ jobs:
           
           if [ "$TAG_NAME" == "$PREV_TAG" ]; then
             echo "status=duplicate" >> $GITHUB_OUTPUT
-            echo ">>> Versi masih sama. Standby."
+            echo ">>> Version unchanged. Standing by."
           else
             echo "status=new" >> $GITHUB_OUTPUT
-            echo ">>> Rilis baru ditemukan!"
+            echo ">>> New release detected!"
           fi
 
-      - name: Process Assets
+      - name: Process Assets (Convert Bytes to MB)
         id: assets
         if: steps.fetch.outputs.status == 'new'
         run: |
@@ -74,15 +74,14 @@ jobs:
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           
           if [ "$COUNT" -gt "0" ]; then
-            # Format list agar bisa diklik langsung di Telegram
-            # Format: - [Nama File](Link Download) (Ukuran bytes)
-            LIST=$(jq -r '.[] | "- [" + .name + "](" + .browser_download_url + ") (" + (.size | tostring) + " bytes)"' assets.json)
+            # Logic: Size / 1024 / 1024 = MB. Rounded to 2 decimal places.
+            LIST=$(jq -r '.[] | "- [" + .name + "](" + .browser_download_url + ") (" + ((.size / 1048576 * 100 | floor / 100) | tostring) + " MB)"' assets.json)
             
             echo "asset_list<<EOF" >> $GITHUB_OUTPUT
             echo "$LIST" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           else
-             echo "asset_list=Tidak ada file asset." >> $GITHUB_OUTPUT
+             echo "asset_list=No assets found." >> $GITHUB_OUTPUT
           fi
 
       - name: Notify Telegram
@@ -92,7 +91,6 @@ jobs:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           format: markdown
-          # Pesan dibuat lebih rapi untuk Release
           message: |
             *🎉 New Release Detected!*
             
@@ -103,7 +101,7 @@ jobs:
             *Download Links:*
             ${{ steps.assets.outputs.asset_list }}
             
-            [Buka Halaman Release](${{ steps.fetch.outputs.release_url }})
+            [View Release Page](${{ steps.fetch.outputs.release_url }})
 
       - name: Update State File
         if: steps.fetch.outputs.status == 'new'
