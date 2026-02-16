@@ -50,13 +50,13 @@ This is not just a simple forwarder. It implements a **Stateful Monitoring Syste
 
 2. **Set Repository Secrets:**
 
-&nbsp;  - `TELEGRAM\_TOKEN`: Your BotFather token.
+&nbsp;  - `TELEGRAM_TOKEN`: Your BotFather token.
 
-&nbsp;  - `TELEGRAM\_TO`: Your Channel/Chat ID.
+&nbsp;  - `TELEGRAM_TO`: Your Channel/Chat ID.
 
 3. **Configure Target:**
 
-&nbsp;  - Edit `env.TARGET\_REPO` in `monitor.yml` to the repository you want to watch.
+&nbsp;  - Edit `env.TARGET_REPO` in `monitor.yml` to the repository you want to watch.
 
 
 
