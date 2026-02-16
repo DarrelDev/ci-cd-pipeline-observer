@@ -11,7 +11,7 @@ permissions:
 env:
   # Target Repository
   TARGET_REPO: topjohnwu/Magisk
-  STATE_FILE: last_release_tag.txt
+  STATE_FILE: last_release_tag_v2.txt
 
 jobs:
   release-monitor:
