@@ -1,4 +1,4 @@
-name: CI/CD Pipeline Observer
+name: Release Observer
 
 on:
   schedule:
@@ -7,115 +7,111 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 env:
-  # Kita pakai Magisk karena dia rajin update & punya artifact
+  # Target Repo (Bisa diganti kapan saja)
   TARGET_REPO: topjohnwu/Magisk
-  STATE_FILE: last_processed_commit.txt
+  STATE_FILE: last_release_tag.txt
 
 jobs:
-  observability-engine:
+  release-monitor:
     runs-on: ubuntu-latest
     steps:
-      - name: State Restoration Cache
+      - name: State Restoration
         uses: actions/cache/restore@v4
         id: restore-state
         with:
           path: ${{ env.STATE_FILE }}
-          key: observer-state-${{ github.run_id }}
+          key: release-state-${{ github.run_id }}
           restore-keys: |
-            observer-state-
+            release-state-
 
-      - name: Fetch Latest Artifact Build
+      - name: Fetch Latest Release
         id: fetch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "DETEKTIF: Memeriksa target repository..."
-          echo "Target: ${{ env.TARGET_REPO }}"
-
-          # Ambil data run terakhir yang sukses
-          LATEST_RUN=$(gh api "repos/${{ env.TARGET_REPO }}/actions/runs" \
-            -F status=success \
-            -F event=push \
-            -F per_page=1 \
-            --jq '.workflow_runs[0]')
-
-          if [ -z "$LATEST_RUN" ] || [ "$LATEST_RUN" == "null" ]; then
-             echo "FATAL: Tidak bisa mengambil data dari ${{ env.TARGET_REPO }}"
-             exit 1
-          fi
-
-          COMMIT_SHA=$(echo "$LATEST_RUN" | jq -r .head_sha)
-          RUN_ID=$(echo "$LATEST_RUN" | jq -r .id)
-          ARTIFACTS_URL=$(echo "$LATEST_RUN" | jq -r .artifacts_url)
+          echo ">>> Checking latest release for: ${{ env.TARGET_REPO }}"
           
-          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-          echo "artifacts_url=$ARTIFACTS_URL" >> $GITHUB_OUTPUT
+          # Ambil data Release Terbaru via API
+          RELEASE_DATA=$(gh api "repos/${{ env.TARGET_REPO }}/releases/latest")
           
-          # Logika Cek Duplikat
+          # Ekstrak Info Penting
+          TAG_NAME=$(echo "$RELEASE_DATA" | jq -r .tag_name)
+          RELEASE_URL=$(echo "$RELEASE_DATA" | jq -r .html_url)
+          TITLE=$(echo "$RELEASE_DATA" | jq -r .name)
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+          # Simpan daftar aset file ke file sementara
+          echo "$RELEASE_DATA" | jq .assets > assets.json
+          
+          # Cek Cache (Apakah versi ini sudah pernah dilaporkan?)
           if [ -f "${{ env.STATE_FILE }}" ]; then
-            PREV_COMMIT=$(cat ${{ env.STATE_FILE }})
+            PREV_TAG=$(cat ${{ env.STATE_FILE }})
           else
-            PREV_COMMIT="none"
+            PREV_TAG="none"
           fi
           
-          if [ "$COMMIT_SHA" == "$PREV_COMMIT" ]; then
+          echo "Current Version: $TAG_NAME"
+          echo "Cached Version:  $PREV_TAG"
+          
+          if [ "$TAG_NAME" == "$PREV_TAG" ]; then
             echo "status=duplicate" >> $GITHUB_OUTPUT
-            echo ">>> Tidak ada update baru. Standby."
+            echo ">>> Versi masih sama. Standby."
           else
             echo "status=new" >> $GITHUB_OUTPUT
-            echo ">>> Update baru ditemukan!"
+            echo ">>> Rilis baru ditemukan!"
           fi
 
-      - name: Artifact Inspection
-        id: inspect
+      - name: Process Assets
+        id: assets
         if: steps.fetch.outputs.status == 'new'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ARTIFACTS=$(gh api "${{ steps.fetch.outputs.artifacts_url }}" --jq '.artifacts')
-          COUNT=$(echo "$ARTIFACTS" | jq length)
+          COUNT=$(jq length assets.json)
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
           
           if [ "$COUNT" -gt "0" ]; then
-            echo "has_artifacts=true" >> $GITHUB_OUTPUT
-            echo "count=$COUNT" >> $GITHUB_OUTPUT
-            LIST=$(echo "$ARTIFACTS" | jq -r '.[] | "- " + .name + " (" + (.size_in_bytes | tostring) + " bytes)"')
-            echo "artifact_list<<EOF" >> $GITHUB_OUTPUT
+            # Format list agar bisa diklik langsung di Telegram
+            # Format: - [Nama File](Link Download) (Ukuran bytes)
+            LIST=$(jq -r '.[] | "- [" + .name + "](" + .browser_download_url + ") (" + (.size | tostring) + " bytes)"' assets.json)
+            
+            echo "asset_list<<EOF" >> $GITHUB_OUTPUT
             echo "$LIST" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           else
-            echo "has_artifacts=false" >> $GITHUB_OUTPUT
+             echo "asset_list=Tidak ada file asset." >> $GITHUB_OUTPUT
           fi
 
-      - name: Notification Dispatch Telegram
-        if: steps.fetch.outputs.status == 'new' && steps.inspect.outputs.has_artifacts == 'true'
+      - name: Notify Telegram
+        if: steps.fetch.outputs.status == 'new'
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           format: markdown
+          # Pesan dibuat lebih rapi untuk Release
           message: |
-            *🚀 Update Magisk Terdeteksi!*
+            *🎉 New Release Detected!*
             
-            *Repository:* `${{ env.TARGET_REPO }}`
-            *Commit:* `${{ steps.fetch.outputs.commit_sha }}`
-            *Artifacts:* ${{ steps.inspect.outputs.count }} file
+            *Repo:* `${{ env.TARGET_REPO }}`
+            *Version:* `${{ steps.fetch.outputs.tag_name }}`
+            *Title:* ${{ steps.fetch.outputs.title }}
             
-            *Daftar File:*
-            ${{ steps.inspect.outputs.artifact_list }}
+            *Download Links:*
+            ${{ steps.assets.outputs.asset_list }}
             
-            [Klik untuk Download](https://github.com/${{ env.TARGET_REPO }}/actions/runs/${{ steps.fetch.outputs.run_id }})
+            [Buka Halaman Release](${{ steps.fetch.outputs.release_url }})
 
-      - name: Write State File
+      - name: Update State File
         if: steps.fetch.outputs.status == 'new'
-        run: echo "${{ steps.fetch.outputs.commit_sha }}" > ${{ env.STATE_FILE }}
+        run: echo "${{ steps.fetch.outputs.tag_name }}" > ${{ env.STATE_FILE }}
 
       - name: Save State to Cache
         if: steps.fetch.outputs.status == 'new'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.STATE_FILE }}
-          key: observer-state-${{ github.run_id }}
+          key: release-state-${{ github.run_id }}
