@@ -2,8 +2,8 @@ name: CI/CD Pipeline Observer
 
 on:
   schedule:
-    - cron: "*/15 * * * *" # Run every 15 minutes
-  workflow_dispatch: # Manual trigger
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
 env:
   TARGET_REPO: "JingMatrix/LSPosed"
@@ -19,8 +19,7 @@ jobs:
         id: restore-state
         with:
           path: ${{ env.STATE_FILE }}
-          # Logic: Restore cache terbaru yang punya prefix "observer-state-"
-          key: observer-state-${{ github.run_id }} 
+          key: observer-state-${{ github.run_id }}
           restore-keys: |
             observer-state-
 
@@ -30,8 +29,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo ">>> Querying GitHub API for latest successful run..."
-          
-          # Fetch latest successful run with artifacts
           LATEST_RUN=$(gh api "repos/${{ env.TARGET_REPO }}/actions/runs" \
             -F status=success \
             -F event=push \
@@ -46,22 +43,16 @@ jobs:
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
           echo "artifacts_url=$ARTIFACTS_URL" >> $GITHUB_OUTPUT
           
-          # Read previous state
           if [ -f "${{ env.STATE_FILE }}" ]; then
             PREV_COMMIT=$(cat ${{ env.STATE_FILE }})
           else
             PREV_COMMIT="none"
           fi
           
-          echo "Current: $COMMIT_SHA"
-          echo "Cached:  $PREV_COMMIT"
-          
           if [ "$COMMIT_SHA" == "$PREV_COMMIT" ]; then
             echo "status=duplicate" >> $GITHUB_OUTPUT
-            echo ">>> No new changes detected. Standing by."
           else
             echo "status=new" >> $GITHUB_OUTPUT
-            echo ">>> New build detected! Proceeding to analysis."
           fi
 
       - name: 📦 Artifact Inspection
@@ -70,18 +61,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Check if artifacts actually exist
           ARTIFACTS=$(gh api "${{ steps.fetch.outputs.artifacts_url }}" --jq '.artifacts')
           COUNT=$(echo "$ARTIFACTS" | jq length)
           
           if [ "$COUNT" -gt "0" ]; then
             echo "has_artifacts=true" >> $GITHUB_OUTPUT
             echo "count=$COUNT" >> $GITHUB_OUTPUT
-            
-            # Format list for Telegram
             LIST=$(echo "$ARTIFACTS" | jq -r '.[] | "- " + .name + " (" + (.size_in_bytes | tostring) + " bytes)"')
-            
-            # Save multiline string safely
             echo "artifact_list<<EOF" >> $GITHUB_OUTPUT
             echo "$LIST" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
@@ -113,6 +99,5 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.STATE_FILE }}
-          # KUNCI RAHASIA: Simpan dengan key baru setiap kali jalan
           key: observer-state-${{ github.run_id }}
         run: echo "${{ steps.fetch.outputs.commit_sha }}" > ${{ env.STATE_FILE }}
