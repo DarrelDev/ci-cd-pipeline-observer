@@ -5,10 +5,13 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 env:
-  # HAPUS TANDA KUTIP AGAR AMAN
-  TARGET_REPO: LSPosed/LSPosed
-  WORKFLOW_FILENAME: ci.yml
+  # GANTI TARGET KE MAGISK (PASTI HIDUP)
+  TARGET_REPO: topjohnwu/Magisk
   STATE_FILE: last_processed_commit.txt
 
 jobs:
@@ -29,23 +32,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # --- DEBUGGING START ---
           echo "DETEKTIF: Memeriksa target repository..."
-          echo "Target Saat Ini: [${{ env.TARGET_REPO }}]"
-          # --- DEBUGGING END ---
+          echo "Target: ${{ env.TARGET_REPO }}"
 
-          echo ">>> Querying GitHub API..."
+          # Ambil data run terakhir yang sukses
           LATEST_RUN=$(gh api "repos/${{ env.TARGET_REPO }}/actions/runs" \
             -F status=success \
             -F event=push \
             -F per_page=1 \
             --jq '.workflow_runs[0]')
 
-          # Cek jika respon kosong (Repo tidak ketemu/Token error)
           if [ -z "$LATEST_RUN" ] || [ "$LATEST_RUN" == "null" ]; then
-            echo "FATAL ERROR: Tidak bisa menemukan data run dari repo ${{ env.TARGET_REPO }}"
-            echo "Kemungkinan penyebab: Repo salah tulis, Repo Private, atau Token dibatasi."
-            exit 1
+             echo "FATAL: Tidak bisa mengambil data dari ${{ env.TARGET_REPO }}"
+             exit 1
           fi
 
           COMMIT_SHA=$(echo "$LATEST_RUN" | jq -r .head_sha)
@@ -56,6 +55,7 @@ jobs:
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
           echo "artifacts_url=$ARTIFACTS_URL" >> $GITHUB_OUTPUT
           
+          # Logika Cek Duplikat
           if [ -f "${{ env.STATE_FILE }}" ]; then
             PREV_COMMIT=$(cat ${{ env.STATE_FILE }})
           else
@@ -64,8 +64,10 @@ jobs:
           
           if [ "$COMMIT_SHA" == "$PREV_COMMIT" ]; then
             echo "status=duplicate" >> $GITHUB_OUTPUT
+            echo ">>> Tidak ada update baru. Standby."
           else
             echo "status=new" >> $GITHUB_OUTPUT
+            echo ">>> Update baru ditemukan!"
           fi
 
       - name: Artifact Inspection
