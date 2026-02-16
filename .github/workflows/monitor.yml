@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  TARGET_REPO: "JingMatrix/LSPosed"
+  TARGET_REPO: "tiann/KernelSU"
   WORKFLOW_FILENAME: "ci.yml"
   STATE_FILE: "last_processed_commit.txt"
 
