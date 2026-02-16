@@ -14,7 +14,7 @@ jobs:
   observability-engine:
     runs-on: ubuntu-latest
     steps:
-      - name: 🔄 State Restoration (Cache)
+      - name: State Restoration Cache
         uses: actions/cache/restore@v4
         id: restore-state
         with:
@@ -23,12 +23,12 @@ jobs:
           restore-keys: |
             observer-state-
 
-      - name: 🔎 Fetch Latest Artifact Build
+      - name: Fetch Latest Artifact Build
         id: fetch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo ">>> Querying GitHub API for latest successful run..."
+          echo ">>> Querying GitHub API..."
           LATEST_RUN=$(gh api "repos/${{ env.TARGET_REPO }}/actions/runs" \
             -F status=success \
             -F event=push \
@@ -55,7 +55,7 @@ jobs:
             echo "status=new" >> $GITHUB_OUTPUT
           fi
 
-      - name: 📦 Artifact Inspection
+      - name: Artifact Inspection
         id: inspect
         if: steps.fetch.outputs.status == 'new'
         env:
@@ -75,7 +75,7 @@ jobs:
             echo "has_artifacts=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🚀 Notification Dispatch (Telegram)
+      - name: Notification Dispatch Telegram
         if: steps.fetch.outputs.status == 'new' && steps.inspect.outputs.has_artifacts == 'true'
         uses: appleboy/telegram-action@master
         with:
@@ -83,7 +83,7 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           format: markdown
           message: |
-            *🚀 New Build Detected!*
+            *New Build Detected!*
             
             *Repository:* `${{ env.TARGET_REPO }}`
             *Commit:* `${{ steps.fetch.outputs.commit_sha }}`
@@ -94,7 +94,7 @@ jobs:
             
             [View Workflow Run](https://github.com/${{ env.TARGET_REPO }}/actions/runs/${{ steps.fetch.outputs.run_id }})
 
-      - name: 💾 Update State (Rolling Cache)
+      - name: Update State Rolling Cache
         if: steps.fetch.outputs.status == 'new'
         uses: actions/cache/save@v4
         with:
